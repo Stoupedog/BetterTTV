@@ -5,51 +5,65 @@ const SafeEventEmitter = require('./utils/safe-event-emitter');
 const $ = require('jquery');
 
 const CLIPS_HOSTNAME = 'clips.twitch.tv';
+const CANCEL_VOD_RECOMMENDATION_SELECTOR = '.recommendations-overlay .pl-rec__cancel.pl-button';
+const CHAT_ROOM_SELECTOR = 'section[data-test-selector="chat-room-component-layout"]';
 
 let router;
 let currentPath = '';
+let currentRoute = '';
 let chatWatcher;
 let vodChatWatcher;
 let clipsChatWatcher;
 let currentChatReference;
+let currentChatChannelId;
 let channel = {};
 
 const loadPredicates = {
     following: () => !!$('.following__header-tabs').length,
     channel: () => {
-        const href = $('.channel-header__user').attr('href');
-        return !!href && href !== '/undefined';
+        const href = $('.channel-header__user-avatar img').attr('src');
+        return !!href;
     },
     chat: () => {
         if (!twitch.updateCurrentChannel()) return false;
+
+        if (!$(CHAT_ROOM_SELECTOR).length) return false;
 
         const lastReference = currentChatReference;
         const currentChat = twitch.getCurrentChat();
 
         if (currentChat && currentChat === lastReference) return false;
+        if (currentChat && currentChat.props.channelID === currentChatChannelId) return false;
         currentChatReference = currentChat;
+        currentChatChannelId = currentChat.props.channelID;
 
         return true;
     },
     player: () => !!twitch.getCurrentPlayer(),
-    vod: () => twitch.updateCurrentChannel() && $('.video-chat__input textarea').length
+    vod: () => twitch.updateCurrentChannel() && $('.video-chat__input textarea').length,
+    vod_recommendation: () => $(CANCEL_VOD_RECOMMENDATION_SELECTOR).length,
+    homepage: () => !!$('.front-page .carousel-player .player').length
 };
 
 const routes = {
+    HOMEPAGE: 'HOMEPAGE',
     DIRECTORY_FOLLOWING_LIVE: 'DIRECTORY_FOLLOWING_LIVE',
     DIRECTORY_FOLLOWING: 'DIRECTORY_FOLLOWING',
     DIRECTORY: 'DIRECTORY',
     CHAT: 'CHAT',
     CHANNEL: 'CHANNEL',
+    DASHBOARD: 'DASHBOARD',
     VOD: 'VOD'
 };
 
 const routeKeysToPaths = {
+    [routes.HOMEPAGE]: /^\/$/i,
     [routes.DIRECTORY_FOLLOWING_LIVE]: /^\/directory\/following\/live$/i,
     [routes.DIRECTORY_FOLLOWING]: /^\/directory\/following$/i,
     [routes.DIRECTORY]: /^\/directory/i,
     [routes.CHAT]: /^(\/popout)?\/[a-z0-9-_]+\/chat$/i,
     [routes.VOD]: /^\/videos\/[0-9]+$/i,
+    [routes.DASHBOARD]: /^\/[a-z0-9-_]+\/dashboard/i,
     [routes.CHANNEL]: /^\/[a-z0-9-_]+/i
 };
 
@@ -75,11 +89,10 @@ class Watcher extends SafeEventEmitter {
         const loadInterval = setInterval(() => {
             let user;
             try {
-                const connectRoot = twitch.getConnectRoot();
-                if (!connectRoot) return;
-                const context = connectRoot._context;
-                router = context.router;
-                user = context.store.getState().session.user;
+                router = twitch.getRouter();
+                const connectStore = twitch.getConnectStore();
+                if (!connectStore || !router) return;
+                user = connectStore.getState().session.user;
             } catch (_) {
                 return;
             }
@@ -146,9 +159,15 @@ class Watcher extends SafeEventEmitter {
         debug.log('Watcher started');
     }
 
+    forceReloadChat() {
+        currentChatReference = null;
+        this.waitForLoad('chat').then(() => this.emit('load.chat'));
+    }
+
     routeObserver() {
         const onRouteChange = location => {
             const lastPath = currentPath;
+            const lastRoute = currentRoute;
             const path = location.pathname;
             const route = getRouteFromPath(path);
 
@@ -158,10 +177,12 @@ class Watcher extends SafeEventEmitter {
             this.emit('load');
 
             currentPath = path;
+            currentRoute = route;
             if (currentPath === lastPath) return;
 
             switch (route) {
                 case routes.DIRECTORY_FOLLOWING:
+                    if (lastRoute === routes.DIRECTORY_FOLLOWING_LIVE) break;
                     this.waitForLoad('following').then(() => this.emit('load.directory.following'));
                     break;
                 case routes.CHAT:
@@ -176,6 +197,11 @@ class Watcher extends SafeEventEmitter {
                     this.waitForLoad('chat').then(() => this.emit('load.chat'));
                     this.waitForLoad('player').then(() => this.emit('load.player'));
                     break;
+                case routes.HOMEPAGE:
+                    this.waitForLoad('homepage').then(() => this.emit('load.homepage'));
+                    break;
+                case routes.DASHBOARD:
+                    this.waitForLoad('chat').then(() => this.emit('load.chat'));
             }
         };
 
@@ -237,6 +263,13 @@ class Watcher extends SafeEventEmitter {
 
         chatWatcher = new window.MutationObserver(mutations =>
             mutations.forEach(mutation => {
+                const target = mutation.target;
+                if (target && target.classList && target.classList.contains('viewer-card')) {
+                    const $el = $(target);
+                    this.emit('chat.moderator_card.open', $el);
+                    return;
+                }
+
                 for (const el of mutation.addedNodes) {
                     const $el = $(el);
 
@@ -244,22 +277,38 @@ class Watcher extends SafeEventEmitter {
                         emitMessage($el);
                     }
 
-                    if ($el.hasClass('viewer-card-layer')) {
+                    if ($el.hasClass('viewer-card')) {
                         this.emit('chat.moderator_card.open', $el);
+                    } else if ($el.hasClass('viewer-card-layer__draggable') && $el.find('.viewer-card').length) {
+                        const $viewerCard = $el.find('.viewer-card');
+                        if ($viewerCard.length) {
+                            this.emit('chat.moderator_card.open', $viewerCard);
+                        }
+                    }
+
+                    if ($el.hasClass('chat-input')) {
+                        this.forceReloadChat();
                     }
                 }
 
                 for (const el of mutation.removedNodes) {
                     const $el = $(el);
 
-                    if ($el.hasClass('viewer-card-layer')) {
-                        this.emit('chat.moderator_card.close', $el);
+                    if ($el.hasClass('viewer-card-layer__draggable')) {
+                        this.emit('chat.moderator_card.close');
                     }
                 }
             })
         );
 
-        this.on('load.chat', () => observe(chatWatcher, $('.chat-room__container')[0]));
+        this.on('load.chat', () => observe(chatWatcher, $(CHAT_ROOM_SELECTOR)[0]));
+
+        // force reload of chat on room swap
+        $('body').on(
+            'click',
+            '.room-picker button[data-test-selector="stream-chat-room-picker-option"]',
+            () => this.forceReloadChat()
+        );
     }
 
     vodChatObserver() {
@@ -295,6 +344,8 @@ class Watcher extends SafeEventEmitter {
         const updateChannel = () => {
             const currentChannel = twitch.getCurrentChannel();
             if (!currentChannel) return;
+
+            debug.log(`Channel Observer: ${currentChannel.name} (${currentChannel.id}) loaded.`);
 
             if (currentChannel.id === channel.id) return;
             channel = currentChannel;

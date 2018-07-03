@@ -10,6 +10,7 @@ const emotes = require('../emotes');
 const nicknames = require('../chat_nicknames');
 const channelEmotesTip = require('../channel_emotes_tip');
 const legacySubscribers = require('../legacy_subscribers');
+const splitChat = require('../split_chat');
 
 const EMOTE_STRIP_SYMBOLS_REGEX = /(^[~!@#$%\^&\*\(\)]+|[~!@#$%\^&\*\(\)]+$)/g;
 const MENTION_REGEX = /^@([a-zA-Z\d_]+)$/;
@@ -93,7 +94,10 @@ class ChatModule {
                 .attr('src', cdn.url('tags/bot.png'));
         }
 
-        const $badgesContainer = $element.find('.chat-badge').closest('span');
+        let $badgesContainer = $element.find('.chat-badge').closest('span');
+        if (!$badgesContainer.length) {
+            $badgesContainer = $element.find('button.chat-line__username').prev('span');
+        }
 
         const badge = staff.get(user.name);
         if (badge) {
@@ -185,6 +189,10 @@ class ChatModule {
     }
 
     messageParser($element, messageObj) {
+        if ($element[0].__bttvParsed) return;
+
+        splitChat.render($element);
+
         const user = formatChatUser(messageObj);
         if (!user) return;
 
@@ -219,7 +227,7 @@ class ChatModule {
             $element.hide();
         }
 
-        const $modIcons = $element.find('.chat-line__mod-icons');
+        const $modIcons = $element.find('.mod-icon');
         if ($modIcons.length) {
             const userIsOwner = twitch.getUserIsOwnerFromTagsBadges(user.badges);
             const userIsMod = twitch.getUserIsModeratorFromTagsBadges(user.badges);
@@ -230,6 +238,8 @@ class ChatModule {
         }
 
         this.messageReplacer($message, user);
+
+        $element[0].__bttvParsed = true;
     }
 }
 

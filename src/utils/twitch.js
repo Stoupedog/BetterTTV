@@ -2,43 +2,46 @@ const $ = require('jquery');
 const Raven = require('raven-js');
 const twitchAPI = require('./twitch-api');
 
-const REACT_ROOT = '#root div[data-reactroot]';
-const CHAT_CONTAINER = '.chat-room__container';
-const VOD_CHAT_CONTAINER = '.video-watch-page__right-column';
+const REACT_ROOT = '#root div';
+const CHANNEL_CONTAINER = '.channel-page';
+const CHAT_CONTAINER = 'section[data-test-selector="chat-room-component-layout"]';
+const VOD_CHAT_CONTAINER = '.qa-vod-chat';
 const CHAT_LIST = '.chat-list';
 const PLAYER = '.player';
 
 const TMIActionTypes = {
-    POST: 0,
-    ACTION: 1,
-    POST_WITH_MENTION: 2,
-    BAN: 3,
-    TIMEOUT: 4,
-    AUTOMOD_REJECTED_PROMPT: 5,
-    AUTOMOD_MESSAGE_REJECTED: 6,
-    AUTOMOD_MESSAGE_ALLOWED: 7,
-    AUTOMOD_MESSAGE_DENIED: 8,
-    CONNECTED: 9,
-    DISCONNECTED: 10,
-    RECONNECT: 11,
-    HOSTING: 12,
-    UNHOST: 13,
-    SUBSCRIPTION: 14,
-    RESUBSCRIPTION: 15,
-    SUBGIFT: 16,
-    CLEAR_CHAT: 17,
-    SUBSCRIBER_ONLY_MODE: 18,
-    FOLLOWERS_ONLY_MODE: 19,
-    SLOW_MODE: 20,
-    EMOTE_ONLY_MODE: 21,
-    ROOM_MODS: 22,
-    ROOM_STATE: 23,
-    RAID: 24,
-    UNRAID: 25,
-    NOTICE: 26,
-    INFO: 27,
-    BADGES_UPDATED: 28,
-    PURCHASE: 29
+    MESSAGE: 0,
+    MODERATION: 1,
+    MODERATION_ACTION: 2,
+    TARGETED_MODERATION_ACTION: 3,
+    AUTO_MOD: 4,
+    SUBSCRIBER_ONLY_MODE: 5,
+    FOLLOWERS_ONLY_MODE: 6,
+    SLOW_MODE: 7,
+    EMOTE_ONLY_MODE: 8,
+    R9K_MODE: 9,
+    CONNECTED: 10,
+    DISCONNECTED: 11,
+    RECONNECT: 12,
+    HOSTING: 13,
+    UNHOST: 14,
+    HOSTED: 15,
+    SUBSCRIPTION: 16,
+    RESUBSCRIPTION: 17,
+    SUBGIFT: 18,
+    CLEAR_CHAT: 19,
+    ROOM_MODS: 20,
+    ROOM_STATE: 21,
+    RAID: 22,
+    UNRAID: 23,
+    RITUAL: 24,
+    NOTICE: 25,
+    INFO: 26,
+    BADGES_UPDATED: 27,
+    PURCHASE: 28,
+    BITS_CHARITY: 29,
+    CRATE_GIFT: 30,
+    REWARD_GIFT: 31
 };
 
 function getReactInstance(element) {
@@ -51,22 +54,7 @@ function getReactInstance(element) {
     return null;
 }
 
-function getReactElement(element) {
-    const instance = getReactInstance(element);
-    if (!instance) return null;
-
-    return instance._currentElement;
-}
-
-function getParentNode(reactElement) {
-    try {
-        return reactElement._owner._currentElement._owner;
-    } catch (_) {
-        return null;
-    }
-}
-
-function searchReactChildren(node, predicate, maxDepth = 15, depth = 0) {
+function searchReactParents(node, predicate, maxDepth = 15, depth = 0) {
     try {
         if (predicate(node)) {
             return node;
@@ -77,19 +65,9 @@ function searchReactChildren(node, predicate, maxDepth = 15, depth = 0) {
         return null;
     }
 
-    const {_renderedChildren: children, _renderedComponent: componenet} = node;
-
-    if (children) {
-        for (const key of Object.keys(children)) {
-            const childResult = searchReactChildren(children[key], predicate, maxDepth, depth + 1);
-            if (childResult) {
-                return childResult;
-            }
-        }
-    }
-
-    if (componenet) {
-        return searchReactChildren(componenet, predicate, maxDepth, depth + 1);
+    const {'return': parent} = node;
+    if (parent) {
+        return searchReactParents(parent, predicate, maxDepth, depth + 1);
     }
 
     return null;
@@ -154,11 +132,7 @@ module.exports = {
 
     TMIActionTypes,
 
-    getReactElement,
-
-    getRouter() {
-        return router;
-    },
+    getReactInstance,
 
     getCurrentChannel() {
         return currentChannel;
@@ -168,38 +142,69 @@ module.exports = {
         return currentUser;
     },
 
-    getConnectRoot() {
-        let root;
+    getConnectStore() {
+        let store;
         try {
-            root = getParentNode(getReactElement($(REACT_ROOT)[0]));
+            const node = searchReactParents(
+                getReactInstance($(REACT_ROOT)[0]),
+                n => n.stateNode && n.stateNode.store
+            );
+            store = node.stateNode.store;
         } catch (_) {}
 
-        return root;
+        return store;
+    },
+
+    getRouter() {
+        let router;
+        try {
+            const node = searchReactParents(
+                getReactInstance($(REACT_ROOT)[0]),
+                n => n.stateNode && n.stateNode.context && n.stateNode.context.router
+            );
+            router = node.stateNode.context.router;
+        } catch (_) {}
+
+        return router;
     },
 
     getCurrentPlayer() {
         let player;
         try {
-            player = getReactElement($(PLAYER)[0])._owner._instance;
+            const node = searchReactParents(
+                getReactInstance($(PLAYER)[0]),
+                n => n.stateNode && n.stateNode.player
+            );
+            player = node.stateNode;
         } catch (_) {}
 
         return player;
     },
 
     getChatController() {
-        const container = $(CHAT_CONTAINER).parent()[0];
-        if (!container) return null;
+        let chatController;
+        try {
+            const node = searchReactParents(
+                getReactInstance($(CHAT_CONTAINER)[0]),
+                n => n.stateNode && n.stateNode.chatBuffer
+            );
+            chatController = node.stateNode;
+        } catch (_) {}
 
-        let controller = searchReactChildren(
-            getReactInstance(container),
-            node => node._instance && node._instance.chatBuffer
-        );
+        return chatController;
+    },
 
-        if (controller) {
-            controller = controller._instance;
-        }
+    getChannelController() {
+        let channelController;
+        try {
+            const node = searchReactParents(
+                getReactInstance($(CHANNEL_CONTAINER)[0]),
+                n => n.stateNode && n.stateNode.channelIsHosting !== undefined
+            );
+            channelController = node.stateNode;
+        } catch (_) {}
 
-        return controller;
+        return channelController;
     },
 
     getChatServiceClient() {
@@ -219,43 +224,42 @@ module.exports = {
     },
 
     getChatScroller() {
-        const list = $(CHAT_LIST)[0];
-        if (!list) return null;
-
-        let scroller;
+        let chatScroller;
         try {
-            scroller = getParentNode(getReactElement(list))._instance;
+            const node = searchReactParents(
+                getReactInstance($(CHAT_LIST)[0]),
+                n => n.stateNode && n.stateNode.props && n.stateNode.scroll
+            );
+            chatScroller = node.stateNode;
         } catch (_) {}
 
-        return scroller;
+        return chatScroller;
     },
 
     getCurrentChat() {
-        const container = $(CHAT_CONTAINER)[0];
-        if (!container) return null;
-
-        let controller;
+        let currentChat;
         try {
-            controller = getParentNode(getReactElement(container))._instance;
+            const node = searchReactParents(
+                getReactInstance($(CHAT_CONTAINER)[0]),
+                n => n.stateNode && n.stateNode.props && n.stateNode.props.onSendMessage
+            );
+            currentChat = node.stateNode;
         } catch (_) {}
 
-        return controller;
+        return currentChat;
     },
 
     getCurrentVodChat() {
-        const container = $(VOD_CHAT_CONTAINER)[0];
-        if (!container) return null;
+        let currentVodChat;
+        try {
+            const node = searchReactParents(
+                getReactInstance($(VOD_CHAT_CONTAINER)[0]),
+                n => n.stateNode && n.stateNode.props && n.stateNode.props.data && n.stateNode.props.data.video
+            );
+            currentVodChat = node.stateNode;
+        } catch (_) {}
 
-        let controller = searchReactChildren(
-            getReactInstance(container),
-            node => node._instance && node._instance.props && node._instance.props.data.video
-        );
-
-        if (controller) {
-            controller = controller._instance;
-        }
-
-        return controller;
+        return currentVodChat;
     },
 
     sendChatAdminMessage(body) {
@@ -264,7 +268,8 @@ module.exports = {
 
         chatController.chatService.onChatNoticeEvent({
             msgid: Date.now(),
-            body
+            body,
+            channel: `#${chatController.chatService.channelLogin}`
         });
     },
 
@@ -283,9 +288,8 @@ module.exports = {
     getChatMessageObject(element) {
         let msgObject;
         try {
-            msgObject = getReactElement(element)._owner._instance.props.message;
+            msgObject = getReactInstance(element).return.stateNode.props.message;
         } catch (_) {}
-        if (!msgObject) return null;
 
         return msgObject;
     },
@@ -293,18 +297,27 @@ module.exports = {
     getConversationMessageObject(element) {
         let msgObject;
         try {
-            msgObject = getParentNode(getReactElement(element))._instance.props.message;
+            const node = searchReactParents(
+                getReactInstance(element),
+                n => n.stateNode && n.stateNode.props && n.stateNode.props.message
+            );
+            msgObject = node.stateNode.props.message;
         } catch (_) {}
 
         return msgObject;
     },
 
     getChatModeratorCardProps(element) {
-        const apolloComponent = searchReactChildren(
-            getReactInstance(element),
-            node => node._instance && node._instance.props.data
-        );
-        return apolloComponent ? apolloComponent._instance.props : null;
+        let apolloComponent;
+        try {
+            const node = searchReactParents(
+                getReactInstance(element),
+                n => n.stateNode && n.stateNode.props && n.stateNode.props.data
+            );
+            apolloComponent = node.stateNode.props;
+        } catch (_) {}
+
+        return apolloComponent;
     },
 
     getUserIsModeratorFromTagsBadges(badges) {

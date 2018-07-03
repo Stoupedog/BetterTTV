@@ -10,11 +10,19 @@ const AUTOCOMPLETE_SUGGESTIONS_SELECTOR = 'div[data-a-target="autocomplete-ballo
 const INPUT_EVENT = new Event('input', {bubbles: true});
 
 function setTextareaValue($inputField, msg) {
-    $inputField.val(msg)[0].dispatchEvent(INPUT_EVENT);
+    $inputField.val(msg);
+    const inputField = $inputField[0];
+    inputField.dispatchEvent(INPUT_EVENT);
+    const instance = twitch.getReactInstance(inputField);
+    if (!instance) return;
+    const props = instance.memoizedProps;
+    if (props && props.onChange) {
+        props.onChange({target: inputField});
+    }
 }
 
 function normalizedStartsWith(word, prefix) {
-    return word.toLowerCase().startsWith(prefix);
+    return word && word.toLowerCase().startsWith(prefix);
 }
 
 class ChatTabcompletionModule {
@@ -51,10 +59,6 @@ class ChatTabcompletionModule {
         this.messageHistory = [];
         this.historyPos = -1;
 
-        $('body').off('keydown.tabComplete focus.tabComplete')
-            .on('keydown.tabComplete', CHAT_INPUT_SELECTOR, e => this.onKeydown(e))
-            .on('focus.tabComplete', CHAT_INPUT_SELECTOR, () => this.onFocus());
-
         this.loadTabCompletionTooltip();
     }
 
@@ -71,6 +75,9 @@ class ChatTabcompletionModule {
 
     resetChannelData() {
         this.userList = new Set();
+        $(CHAT_INPUT_SELECTOR).off('keydown.tabComplete focus.tabComplete')
+            .on('keydown.tabComplete', e => this.onKeydown(e))
+            .on('focus.tabComplete', () => this.onFocus());
     }
 
     onFocus() {
@@ -118,6 +125,9 @@ class ChatTabcompletionModule {
                     cursorOffset = 1;
                 }
 
+                // prevent twitch's tab completion from preventing text replacement
+                e.stopImmediatePropagation();
+
                 const cursorPos = this.textSplit[0].length + this.suggestions[this.tabTries].length + cursorOffset;
                 setTextareaValue($inputField, this.textSplit[0] + this.suggestions[this.tabTries] + this.textSplit[2]);
                 $inputField[0].setSelectionRange(cursorPos, cursorPos);
@@ -157,8 +167,8 @@ class ChatTabcompletionModule {
     }
 
     getSuggestions(prefix, includeUsers = true, includeEmotes = true) {
-        let userList;
-        let emoteList;
+        let userList = [];
+        let emoteList = [];
 
         prefix = prefix.toLowerCase();
 
@@ -191,7 +201,11 @@ class ChatTabcompletionModule {
     }
 
     getTwitchEmotes() {
-        return Object.keys(twitch.getChatController().getCurrentEmotes());
+        try {
+            return Object.keys(twitch.getChatController().props.emoteSetsData.emoteMap);
+        } catch (_) {
+            return [];
+        }
     }
 }
 

@@ -1,5 +1,11 @@
 .bttv-hide-player-extensions {
-  #js-player-extension-root {
+  .extension-container {
     display: none !important;
+  }
+}
+
+.bttv-hide-player-cursor {
+  .video-player--fullscreen .player {
+    cursor: none;
   }
 }

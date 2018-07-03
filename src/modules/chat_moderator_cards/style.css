@@ -1,11 +1,11 @@
-.viewer-card__overlay {
-    background: rgba(0, 0, 0, 0.4);
-}
-
-.viewer-card__actions .tw-c-background-alt-2 .tw-tooltip-wrapper {
+.viewer-card__actions .tw-c-background-alt-2 .viewer-card-drag-cancel {
     .tw-pd-r-1, .tw-pd-l-1 {
         padding-right: 0px !important;
         padding-left: 0px !important;
+    }
+
+    .tw-mg-r-1 {
+        margin-right: 0px !important;
     }
 }
 
@@ -14,12 +14,15 @@
 
     .tw-button__text {
         height: 28px;
+        padding-right: 6px;
+        padding-left: 6px;
     }
 }
 
 .bttv-moderator-card-user-stats {
     color: white;
-    margin-bottom: 10px;
+    padding-bottom: 10px;
+    background-color: rgba(0,0,0,0.6);
 }
 
 .bttv-moderator-card-messages {
@@ -41,6 +44,11 @@
 
         .chat-line__mod-icons {
             display: none !important;
+        }
+
+        /* Prevent Message Delete Link */
+        .chat-line__message--deleted > a {
+            pointer-events: none;
         }
     }
 
